@@ -52,6 +52,7 @@ func (u *User) setUniqueId() {
 }
 
 func createUser(w http.ResponseWriter, r *http.Request) {
+	fmt.Println(users)
 	w.Header().Set("Content-Type", "application/json")
 	var newUser User
 	_ = json.NewDecoder(r.Body).Decode(&newUser) // ToDo: Log error
@@ -73,7 +74,6 @@ func getLeaderboard(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	var order Order
 	var pageSize int
-
 	// Initilize pagesize
 	pageSize = 1
 	_ = json.NewDecoder(r.Body).Decode(&order)
@@ -111,12 +111,7 @@ func getLeaderboard(w http.ResponseWriter, r *http.Request) {
 
 func createSessionId(user User) string {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"nickname": user.Nickname,
-		"email":    user.Email,
-		"about":    user.About,
-		"region":   user.Region,
-		"img":      user.ImgUrl,
-		"age":      user.Age,
+		"id": user.ID,
 	})
 	// ToDo: Error handle
 	spiceSalt, _ := ioutil.ReadFile("secret.conf")
@@ -139,10 +134,27 @@ func checkAuth(cookie *http.Cookie) jwt.MapClaims {
 	return claims
 }
 
+func isAuth(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie("session_id")
+	if err != nil {
+		w.Write([]byte("=("))
+		return
+	}
+
+	claims := checkAuth(cookie)
+	for _, user := range users {
+		if user.Nickname == claims["id"].(string) {
+			json.NewEncoder(w).Encode(map[string]bool{"is_auth": true})
+			return
+		}
+	}
+	json.NewEncoder(w).Encode(map[string]bool{"is_auth": false})
+}
+
 func editUser(w http.ResponseWriter, r *http.Request) {
+	fmt.Println(users)
 	//Checking cookie
 	cookie, err := r.Cookie("session_id")
-	fmt.Println(cookie.Path)
 	if err != nil {
 		w.Write([]byte("=("))
 		return
@@ -150,13 +162,15 @@ func editUser(w http.ResponseWriter, r *http.Request) {
 	// Taking JSON of modified user from edit form
 	var modUser User
 	_ = json.NewDecoder(r.Body).Decode(&modUser)
+	file, _, err := r.FormFile("avatar")
+	fmt.Println(file)
 	// Getting claims from current cookie
 	claims := checkAuth(cookie)
 
 	// Finding user from claims in users and changing old data to modified data
-	for _, user := range users {
-		if user.Nickname == claims["nickname"].(string) {
-			u := &user
+	for i, user := range users {
+		if user.ID == claims["id"].(string) {
+			u := &users[i]
 			if modUser.Nickname != "" {
 				u.Nickname = modUser.Nickname
 			}
@@ -188,7 +202,6 @@ func login(w http.ResponseWriter, r *http.Request) {
 	var sessionId string
 	var userExistFlag bool
 	var existUser User
-	userExistFlag = false
 	_ = json.NewDecoder(r.Body).Decode(&existUser)
 	for _, user := range users {
 		if user.Nickname == existUser.Nickname && user.Password == existUser.Password {
@@ -201,26 +214,38 @@ func login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sessionId = createSessionId(existUser)
-	fmt.Println(sessionId)
 	cookie := &http.Cookie{
 		Name:     "session_id",
 		Value:    sessionId,
 		HttpOnly: false,
 	}
-	fmt.Println()
-	claims := checkAuth(cookie)
-	fmt.Println(claims)
 	http.SetCookie(w, cookie)
 	json.NewEncoder(w).Encode(existUser)
 }
 
+func getMe(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie("session_id")
+	if err != nil {
+		w.Write([]byte("=("))
+		return
+	}
+	claims := checkAuth(cookie)
+	for _, user := range users {
+		if user.ID == claims["id"].(string) {
+			json.NewEncoder(w).Encode(user)
+			return
+		}
+	}
+}
+
 // ToDO: Add case sensitive ( high/low )
 func getUser(w http.ResponseWriter, r *http.Request) {
+
 	w.Header().Set("Content-Type", "application/json")
 	params := mux.Vars(r)
 	for _, item := range users {
 		//id, _ := strconv.Atoi(params["ID"])
-		if item.Nickname == params["Nickname"] {
+		if item.ID == params["id"] {
 			json.NewEncoder(w).Encode(item)
 			return
 		}
@@ -229,17 +254,39 @@ func getUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func upload(w http.ResponseWriter, r *http.Request) {
+	// Tacking file from request
+	fmt.Println("UPLOAD")
 	r.ParseMultipartForm(32 << 20)
+	fmt.Println(r)
 	file, _, err := r.FormFile("uploadfile")
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 	defer file.Close()
-	f, err := os.OpenFile("./static/img/"+"test1.jpg", os.O_WRONLY|os.O_CREATE, 0666) // ToDo: Change way to handle img
+	fmt.Println("FILE IS HERE")
+
+	// Tacking cookie of current user
+	cookie, err := r.Cookie("session_id")
+	if err != nil {
+		w.Write([]byte("=("))
+		return
+	}
+	claims := checkAuth(cookie)
+	// Path to users avatar
+	picpath := "./static/img/" + claims["id"].(string) + ".jpeg"
+	f, err := os.OpenFile(picpath, os.O_WRONLY|os.O_CREATE, 0666)
 	if err != nil {
 		fmt.Println(err)
 		return
+	}
+
+	// Changing ImgURL field in current user
+	for i, user := range users {
+		if user.ID == claims["id"].(string) {
+			u := &users[i]
+			u.ImgUrl = picpath
+		}
 	}
 	defer f.Close()
 	io.Copy(f, file)
@@ -258,8 +305,12 @@ func main() {
 	users = append(users, mockedUser1)
 	reciever := mux.NewRouter()
 	// GET  ( get exists data )
+
 	reciever.HandleFunc("/users/{Nickname}", getUser).Methods("GET")
+
 	reciever.HandleFunc("/leaderboard", getLeaderboard).Methods("GET")
+	reciever.HandleFunc("/isauth", isAuth).Methods("GET")
+	reciever.HandleFunc("/me", getMe).Methods("Get")
 	//reciever.HandleFunc("/edit", editUser).Methods("GET")
 
 	// POST ( create new data )
