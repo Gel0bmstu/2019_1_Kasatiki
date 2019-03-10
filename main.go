@@ -63,7 +63,7 @@ func createUser(w http.ResponseWriter, r *http.Request) {
 	}
 	newUser.setUniqueId()
 	users = append(users, newUser) // Check succesfull append? ( in db clearly )
-	json.NewEncoder(w).Encode(newUser)
+	//json.NewEncoder(w).Encode(newUser)
 
 }
 
@@ -80,7 +80,6 @@ func getLeaderboard(w http.ResponseWriter, r *http.Request) {
 	sort.Slice(users, func(i, j int) bool {
 		return users[i].Points > users[j].Points
 	})
-
 	offset, getOffset := r.URL.Query()["offset"]
 	if getOffset {
 		offsetInt, _ := strconv.ParseInt(offset[0], 10, 32) // ToDo Handle error
@@ -135,18 +134,54 @@ func checkAuth(cookie *http.Cookie) jwt.MapClaims {
 	})
 
 	claims, _ := token.Claims.(jwt.MapClaims)
+
 	// ToDo: Handle else case
 	return claims
 }
 
 func editUser(w http.ResponseWriter, r *http.Request) {
+	//Checking cookie
 	cookie, err := r.Cookie("session_id")
+	fmt.Println(cookie.Path)
 	if err != nil {
 		w.Write([]byte("=("))
 		return
 	}
+	// Taking JSON of modified user from edit form
+	var modUser User
+	_ = json.NewDecoder(r.Body).Decode(&modUser)
+	// Getting claims from current cookie
 	claims := checkAuth(cookie)
-	w.Write([]byte(claims["email"].(string)))
+
+	// Finding user from claims in users and changing old data to modified data
+	for _, user := range users {
+		if user.Nickname == claims["nickname"].(string) {
+			u := &user
+			if modUser.Nickname != "" {
+				u.Nickname = modUser.Nickname
+			}
+			if modUser.Email != "" {
+				u.Email = modUser.Email
+			}
+			if modUser.Password != "" {
+				u.Password = modUser.Password
+			}
+			if modUser.Region != "" {
+				u.Region = modUser.Region
+			}
+			if modUser.Age != 0 {
+				u.Age = modUser.Age
+			}
+			if modUser.About != "" {
+				u.About = modUser.About
+			}
+			if modUser.ImgUrl != "" {
+				u.ImgUrl = modUser.ImgUrl
+			}
+			json.NewEncoder(w).Encode(*u)
+			break
+		}
+	}
 }
 
 func login(w http.ResponseWriter, r *http.Request) {
@@ -168,9 +203,13 @@ func login(w http.ResponseWriter, r *http.Request) {
 	sessionId = createSessionId(existUser)
 	fmt.Println(sessionId)
 	cookie := &http.Cookie{
-		Name:  "session_id",
-		Value: sessionId,
+		Name:     "session_id",
+		Value:    sessionId,
+		HttpOnly: false,
 	}
+	fmt.Println()
+	claims := checkAuth(cookie)
+	fmt.Println(claims)
 	http.SetCookie(w, cookie)
 	json.NewEncoder(w).Encode(existUser)
 }
@@ -221,13 +260,14 @@ func main() {
 	// GET  ( get exists data )
 	reciever.HandleFunc("/users/{Nickname}", getUser).Methods("GET")
 	reciever.HandleFunc("/leaderboard", getLeaderboard).Methods("GET")
-	reciever.HandleFunc("/edit", editUser).Methods("GET")
+	//reciever.HandleFunc("/edit", editUser).Methods("GET")
 
 	// POST ( create new data )
 	reciever.HandleFunc("/signup", createUser).Methods("POST")
 	reciever.HandleFunc("/upload", upload).Methods("POST")
 	reciever.HandleFunc("/login", login).Methods("POST")
+	reciever.HandleFunc("/users/{Nickname}", editUser).Methods("POST")
 
-	//reciever.PathPrefix("/").Handler(http.FileServer(http.Dir("./static/"))) // Uncomment if want to run locally
+	reciever.PathPrefix("/").Handler(http.FileServer(http.Dir("./static/"))) // Uncomment if want to run locally
 	log.Fatal(http.ListenAndServe(":8080", reciever))
 }
