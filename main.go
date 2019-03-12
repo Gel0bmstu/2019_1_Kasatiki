@@ -17,6 +17,9 @@ import (
 
 // ToDo бахнуть обработку ошибок
 
+
+
+
 type User struct {
 	ID       string
 	Nickname string `json:"nickname"`
@@ -29,14 +32,22 @@ type User struct {
 	About    string
 }
 
+
+
+
 type Order struct {
 	Sequence string `json:"order"`
 }
+
+
 
 //ToDo: Move to another package
 var errorLogin = map[string]string{
 	"Error": "User dont exist",
 }
+
+
+
 
 var errorCreateUser = map[string]string{
 	"Error": "Nickname/mail already exists",
